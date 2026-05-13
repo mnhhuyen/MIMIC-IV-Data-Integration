@@ -4,9 +4,15 @@
 .env.*.local
 
 # Data Files (Large datasets - do not commit)
-data/raw/
-data/silver/
-data/graph/
+# ignore all files within these folders but allow placeholder files (.gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+
+data/silver/*
+!data/silver/.gitkeep
+
+data/graph/*
+!data/graph/.gitkeep
 
 # Neo4j Database
 neo4j/data/
