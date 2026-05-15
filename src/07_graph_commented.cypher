@@ -56,10 +56,10 @@ CREATE CONSTRAINT icu_stay_id IF NOT EXISTS
 FOR (i:ICUStay)
 REQUIRE i.stay_id IS UNIQUE;
 
-// Disease node: icd_code must be unique (ICD-10 diagnosis code)
+// Disease node: icd_code + icd_version must be unique (combination of ICD code and version)
 CREATE CONSTRAINT disease_id IF NOT EXISTS
 FOR (d:Disease)
-REQUIRE d.icd_code IS UNIQUE;
+REQUIRE (d.icd_code, d.icd_version) IS UNIQUE;
 
 // Lab Test node: itemid must be unique (lab test item ID)
 CREATE CONSTRAINT labtest_id IF NOT EXISTS
@@ -70,6 +70,27 @@ REQUIRE l.itemid IS UNIQUE;
 CREATE CONSTRAINT icuitem_id IF NOT EXISTS
 FOR (i:ICUItem)
 REQUIRE i.itemid IS UNIQUE;
+
+CREATE CONSTRAINT external_disease_uri
+IF NOT EXISTS
+FOR (d:ExternalDisease)
+REQUIRE d.uri IS UNIQUE;
+
+CREATE CONSTRAINT symptom_name
+IF NOT EXISTS
+FOR (s:Symptom)
+REQUIRE s.name IS UNIQUE;
+
+CREATE CONSTRAINT treatment_name
+IF NOT EXISTS
+FOR (t:Treatment)
+REQUIRE t.name IS UNIQUE;
+
+CREATE CONSTRAINT category_name
+IF NOT EXISTS
+FOR (c:DiseaseCategory)
+REQUIRE c.name IS UNIQUE;
+
 
 // =====================================================================
 // PART 2: LOAD NODE DATA FROM CSV FILES
@@ -96,11 +117,13 @@ SET
     p.gender = row.gender,
     p.anchor_age = toInteger(row.anchor_age);
 
-// Load Disease nodes (diagnoses from ICD-10)
-// Properties: icd_code (unique - e.g., 'E11.9' for Type 2 Diabetes), long_title (disease name)
+// Load Disease nodes (diagnoses from ICD-9 and ICD-10)
+// Properties: icd_code (unique - e.g., 'E11.9' for Type 2 Diabetes or '064' for ICD-9), 
+//             icd_version (9 or 10), long_title (disease name)
 LOAD CSV WITH HEADERS FROM 'file:///nodes_disease.csv' AS row
 MERGE (d:Disease {
-    icd_code: row.icd_code
+    icd_code: row.icd_code,
+    icd_version: row.icd_version
 })
 SET
     d.long_title = row.name;
@@ -130,6 +153,17 @@ MERGE (i:ICUItem {
 SET
     i.label = row.name;
 
+LOAD CSV WITH HEADERS
+FROM 'file:///dbpedia.csv'
+AS row
+
+MERGE (d:ExternalDisease {
+    uri: row.disease
+})
+
+SET d.name = row.diseaseName,
+    d.icd9 = row.icd9,
+    d.icd10 = row.icd10;
 // =====================================================================
 // PART 3: LOAD RELATIONSHIP DATA (EDGES) FROM CSV FILES
 // =====================================================================
@@ -145,11 +179,11 @@ MERGE (p)-[:HAS_ADMISSION]->(a);
 
 // Relationship 2: Admission -> Disease (admission HAS_DISEASE disease)
 // Connects admissions to diagnosed diseases
-// Note: target format is "icd_version_code", split by '_' to extract icd_code
+// Note: target format is "icd_version_code", split by '_' to extract icd_code and icd_version
 LOAD CSV WITH HEADERS FROM 'file:///edges_admission_disease.csv' AS row
 WITH row, split(row.target, '_') AS parts
 MATCH (a:Admission {hadm_id: toInteger(row.source)})
-MATCH (d:Disease {icd_code: parts[1]})
+MATCH (d:Disease {icd_code: parts[1], icd_version: parts[0]})
 MERGE (a)-[r:HAS_DISEASE]->(d)
 SET r.seq_num = CASE WHEN row.seq_num IS NOT NULL AND row.seq_num <> '' THEN toInteger(row.seq_num) ELSE NULL END;
 
@@ -166,8 +200,13 @@ MERGE (a)-[:HAS_ICU_STAY]->(s);
 LOAD CSV WITH HEADERS FROM 'file:///edges_admission_labtest.csv' AS row
 MATCH (a:Admission {hadm_id: toInteger(row.source)})
 MATCH (l:LabTest {itemid: toInteger(row.target)})
-MERGE (a)-[r:HAS_LABTEST]->(l)
-SET r.valuenum = CASE WHEN row.valuenum IS NOT NULL AND row.valuenum <> '' THEN toFloat(row.valuenum) ELSE NULL END,
+CREATE (a)-[r:HAS_LABTEST]->(l)
+SET r.valuenum =
+        CASE
+            WHEN row.valuenum IS NOT NULL AND row.valuenum <> ''
+            THEN toFloat(row.valuenum)
+            ELSE NULL
+        END,
     r.valueuom = row.valueuom,
     r.flag = row.flag,
     r.charttime = row.charttime;
@@ -178,11 +217,21 @@ SET r.valuenum = CASE WHEN row.valuenum IS NOT NULL AND row.valuenum <> '' THEN 
 LOAD CSV WITH HEADERS FROM 'file:///edges_icu_chart.csv' AS row
 MATCH (s:ICUStay {stay_id: toInteger(row.source)})
 MATCH (i:ICUItem {itemid: toInteger(row.target)})
-MERGE (s)-[r:HAS_CHART]->(i)
+CREATE (s)-[r:HAS_CHART]->(i)
 SET r.value = row.value,
-    r.valuenum = CASE WHEN row.valuenum IS NOT NULL AND row.valuenum <> '' THEN toFloat(row.valuenum) ELSE NULL END,
+    r.valuenum =
+        CASE
+            WHEN row.valuenum IS NOT NULL AND row.valuenum <> ''
+            THEN toFloat(row.valuenum)
+            ELSE NULL
+        END,
     r.valueuom = row.valueuom,
-    r.warning = CASE WHEN row.warning IS NOT NULL AND row.warning <> '' THEN toInteger(row.warning) ELSE NULL END,
+    r.warning =
+        CASE
+            WHEN row.warning IS NOT NULL AND row.warning <> ''
+            THEN toInteger(row.warning)
+            ELSE NULL
+        END,
     r.charttime = row.charttime;
 
 // Relationship 6: ICU Stay -> ICU Item (icu_stay HAS_DATETIME icu_item)
@@ -190,10 +239,15 @@ SET r.value = row.value,
 LOAD CSV WITH HEADERS FROM 'file:///edges_icu_datetime.csv' AS row
 MATCH (s:ICUStay {stay_id: toInteger(row.source)})
 MATCH (i:ICUItem {itemid: toInteger(row.target)})
-MERGE (s)-[r:HAS_DATETIME]->(i)
+CREATE (s)-[r:HAS_DATETIME]->(i)
 SET r.datetime_value = row.datetime_value,
     r.valueuom = row.valueuom,
-    r.warning = CASE WHEN row.warning IS NOT NULL AND row.warning <> '' THEN toInteger(row.warning) ELSE NULL END,
+    r.warning =
+        CASE
+            WHEN row.warning IS NOT NULL AND row.warning <> ''
+            THEN toInteger(row.warning)
+            ELSE NULL
+        END,
     r.charttime = row.charttime;
 
 // Relationship 7: ICU Stay -> ICU Item (icu_stay HAS_INPUT icu_item)
@@ -202,13 +256,28 @@ SET r.datetime_value = row.datetime_value,
 LOAD CSV WITH HEADERS FROM 'file:///edges_icu_input.csv' AS row
 MATCH (s:ICUStay {stay_id: toInteger(row.source)})
 MATCH (i:ICUItem {itemid: toInteger(row.target)})
-MERGE (s)-[r:HAS_INPUT]->(i)
-SET r.amount = CASE WHEN row.amount IS NOT NULL AND row.amount <> '' THEN toFloat(row.amount) ELSE NULL END,
+CREATE (s)-[r:HAS_INPUT]->(i)
+SET r.amount =
+        CASE
+            WHEN row.amount IS NOT NULL AND row.amount <> ''
+            THEN toFloat(row.amount)
+            ELSE NULL
+        END,
     r.amountuom = row.amountuom,
-    r.rate = CASE WHEN row.rate IS NOT NULL AND row.rate <> '' THEN toFloat(row.rate) ELSE NULL END,
+    r.rate =
+        CASE
+            WHEN row.rate IS NOT NULL AND row.rate <> ''
+            THEN toFloat(row.rate)
+            ELSE NULL
+        END,
     r.rateuom = row.rateuom,
     r.ordercategoryname = row.ordercategoryname,
-    r.patientweight = CASE WHEN row.patientweight IS NOT NULL AND row.patientweight <> '' THEN toFloat(row.patientweight) ELSE NULL END,
+    r.patientweight =
+        CASE
+            WHEN row.patientweight IS NOT NULL AND row.patientweight <> ''
+            THEN toFloat(row.patientweight)
+            ELSE NULL
+        END,
     r.starttime = row.starttime,
     r.endtime = row.endtime;
 
@@ -217,10 +286,74 @@ SET r.amount = CASE WHEN row.amount IS NOT NULL AND row.amount <> '' THEN toFloa
 LOAD CSV WITH HEADERS FROM 'file:///edges_icu_output.csv' AS row
 MATCH (s:ICUStay {stay_id: toInteger(row.source)})
 MATCH (i:ICUItem {itemid: toInteger(row.target)})
-MERGE (s)-[r:HAS_OUTPUT]->(i)
-SET r.value = row.value,
+CREATE (s)-[r:HAS_OUTPUT]->(i)
+SET r.value =
+        CASE
+            WHEN row.value IS NOT NULL AND row.value <> ''
+            THEN toFloat(row.value)
+            ELSE NULL
+        END,
     r.valueuom = row.valueuom,
     r.charttime = row.charttime;
+
+//9) disease -> symptom
+LOAD CSV WITH HEADERS
+FROM 'file:///dbpedia.csv'
+AS row
+
+WITH row
+WHERE row.symptomName IS NOT NULL 
+  AND trim(row.symptomName) <> ''
+
+MATCH (d:ExternalDisease {uri: row.disease})
+
+MERGE (s:Symptom {name: trim(row.symptomName)})
+MERGE (d)-[:HAS_SYMPTOM]->(s);
+
+//10)/ disease -> treatment
+LOAD CSV WITH HEADERS
+FROM 'file:///dbpedia.csv'
+AS row
+
+WITH row
+WHERE row.treatmentName IS NOT NULL 
+  AND trim(row.treatmentName) <> ''
+
+MATCH (d:ExternalDisease {uri: row.disease})
+
+MERGE (t:Treatment {name: trim(row.treatmentName)})
+MERGE (d)-[:HAS_TREATMENT]->(t);
+
+//11)Disease-> category
+LOAD CSV WITH HEADERS
+FROM 'file:///dbpedia.csv'
+AS row
+// =====================================================================
+// PART 3.5: INTEGRATE MIMIC DISEASES WITH DBPEDIA EXTERNAL DISEASES
+// =====================================================================
+// Connect MIMIC-IV Disease nodes with DBpedia External Diseases
+// This creates a SAME_AS relationship when a MIMIC disease matches a DBpedia disease
+// by ICD code and version, with metadata about the matching quality
+
+// Relationship: MIMIC Disease -> DBpedia External Disease (SAME_AS)
+// Attributes: score (matching confidence 0-1), method (matching algorithm), match_status
+LOAD CSV WITH HEADERS
+FROM 'file:///disease_dbpedia_matches.csv'
+AS row
+
+MATCH (m:Disease {
+    icd_code: row.mimic_icd_code,
+})
+
+MATCH (e:ExternalDisease {
+    uri: row.dbpedia_uri
+})
+
+MERGE (m)-[r:SAME_AS]->(e)
+
+SET r.score = toFloat(row.score),
+    r.method = row.method,
+    r.match_status = row.match_status;
 
 // =====================================================================
 // PART 4: DISEASE CO-OCCURRENCE NETWORK

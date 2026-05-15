@@ -1,0 +1,5 @@
+config,runtime_sec,metric_count,notes
+Baseline Parquet (shuffle=200),4.3607,36459,coocc+similarity
+Parquet + shuffle=16,0.9641,36459,coocc+similarity
+Parquet + broadcast,0.8447,36459,coocc+similarity
+Parquet + broadcast + cache + repartition,1.4963,36459,coocc+similarity

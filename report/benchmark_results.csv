@@ -1,0 +1,5 @@
+config,runtime_sec,rows,notes
+Baseline CSV,4.5778,84088,"Raw CSV, default-style shuffle"
+Parquet + shuffle=16,1.3704,84088,"Columnar format, smaller shuffle parallelism"
+Parquet + broadcast join,0.7823,84088,Broadcast the smaller ICD mapping table
+Parquet + broadcast + repartition + cache,1.7849,84088,"Repartition on icd_code, cache both inputs"
