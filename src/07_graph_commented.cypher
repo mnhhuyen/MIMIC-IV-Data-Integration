@@ -328,6 +328,15 @@ MERGE (d)-[:HAS_TREATMENT]->(t);
 LOAD CSV WITH HEADERS
 FROM 'file:///dbpedia.csv'
 AS row
+
+WITH row
+WHERE row.categoryName IS NOT NULL 
+  AND trim(row.categoryName) <> ''
+
+MATCH (d:ExternalDisease {uri: row.disease})
+
+MERGE (c:DiseaseCategory {name: trim(row.categoryName)})
+MERGE (d)-[:IN_CATEGORY]->(c);
 // =====================================================================
 // PART 3.5: INTEGRATE MIMIC DISEASES WITH DBPEDIA EXTERNAL DISEASES
 // =====================================================================
